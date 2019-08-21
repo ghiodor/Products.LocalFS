@@ -41,7 +41,8 @@
 __doc__="""Local File System product initialization"""
 __version__='$Revision: 1.1.1.1 $'[11:-2]
     
-import os, LocalFS
+import os
+import Products.LocalFS.LocalFS
 from App.ImageFile import ImageFile
 
 misc_ = {}
