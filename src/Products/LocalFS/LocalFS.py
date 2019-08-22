@@ -328,8 +328,8 @@ def _create_ob_from_function(c, id, file, path):
         m, c = c[:i], c[i+1:]
         m = __import__(m, globals(), locals(), (c,))
         c = getattr(m, c)
-        f = getattr(c, 'createSelf').im_func
-        if f.func_code.co_varnames == ('id', 'file'):
+        f = getattr(c, 'createSelf').__func__ # TODO: does it have __func__?
+        if f.__code__.co_varnames == ('id', 'file'):
             return _wrap_ob(f(id, file), path)
     except: pass
     
@@ -415,11 +415,13 @@ def _get_wrapper(c):
 def _wrap_method(c, name):
     try: m = getattr(c.__bases__[-1], name)
     except AttributeError: return
-    f = m.im_func
-    a = list(f.func_code.co_varnames)[:f.func_code.co_argcount]
+#    f = m.im_func <- code for py2
+#    f = m.__func__ <-- code for py3 doesn't work, m is a function, not a method
+    f = m
+    a = list(f.__code__.co_varnames)[:f.__code__.co_argcount]
     # *** SmileyChris d = f.func_defaults    replaced with next line so we don't get a len(None)!
     # ***                                    this makes pt_edit work...
-    d = f.func_defaults or ()
+    d = f.__defaults__ or ()
     arglist = []
     baseargs = []
     while (len(a) > len(d)):
@@ -432,7 +434,7 @@ def _wrap_method(c, name):
     arglist= '(' + ','.join(arglist) + ')'
     baseargs = '(' + ','.join(baseargs) + ')'
     d = {}
-    exec(_wrapper_method % vars(), globals, d)
+    exec(_wrapper_method % vars(), globals(), d)
 #    exec _wrapper_method % vars() in globals(), d
     setattr(c, name, d[name])
 
@@ -516,7 +518,7 @@ def _save_ob(ob, path):
 def _set_timestamp(ob, path):
     t = os.stat(path)[stat.ST_MTIME]
     t = TimeStamp(*time.gmtime(t)[:6])
-    ob._p_serial = repr(t)
+    ob._p_serial = t.raw()
     
 _marker=[]
 
