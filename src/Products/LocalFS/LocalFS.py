@@ -455,10 +455,7 @@ def _save_File(ob, path):
         f.write(str(ob.data))
         f.close()
     else:
-        if find_binary(ob.data) >= 0:
-            f = open(path, 'wb')
-        else:
-            f = open(path, 'w')
+        f = open(path, 'wb')
         f.write(ob.data)
         f.close()
 
