@@ -38,28 +38,23 @@
 #
 ##############################################################################
 """Local File System product"""
-__version__='1.12'
+__version__='2.0'
 __doc__="""Local File System product"""
 
-import sys, os, string, re, stat, glob as errno, time, tempfile
+import sys, os, re, stat, glob as errno, time, tempfile
 from urllib.parse import quote
 import App, Acquisition, Persistence, OFS
-import AccessControl, re
+import AccessControl
 from App.Extensions import getObject
 from App.FactoryDispatcher import ProductDispatcher
 #TODO from webdav.NullResource import LockNullResource
 from ZPublisher.HTTPResponse import HTTPResponse
 from App.Dialogs import MessageDialog
 from App.special_dtml import HTMLFile
-try: 
-    from zope.contenttype import find_binary 
-except ImportError: 
-    from OFS.content_types import find_binary
 from OFS.Image import Pdata
 from TreeDisplay.TreeTag import encode_str
-# from OFS.CopySupport import _cb_encode, _cb_decode, CopyError, eNoData, eInvalid, eNotFound
 from OFS.CopySupport import _cb_encode, _cb_decode, CopyError
-
+# The following MessageDialog are no longer available from OFS.CopySupport
 eNoData=MessageDialog(
         title='No Data',
         message='No clipboard data found.',
@@ -79,8 +74,6 @@ eNotFound=MessageDialog(
           'copied it.',
           action ='manage_main',)
 
-
-
 from ZODB.TimeStamp import TimeStamp
 from DateTime import DateTime
 import marshal  # sbk
@@ -90,30 +83,25 @@ try:
 except ImportError: 
     # Zope <=2.12 
     from AccessControl.Role import RoleManager
-
 from zExceptions import BadRequest, Forbidden, Unauthorized, NotFound, MethodNotAllowed
 class UploadError(Exception): pass
 class RenameError(Exception): pass
 class DeleteError(Exception): pass
-
 try:
     from StreamingFile import StreamingFile, StreamingImage
     ITERATORS_PRESENT=1
 except:
     ITERATORS_PRESENT=0
-    
 # ***SmileyChris
 from Products.PageTemplates.ZopePageTemplate import ZopePageTemplate
 from Products.PythonScripts.PythonScript import PythonScript
 
 _iswin32 = (sys.platform == 'win32')
-
 if (_iswin32):
     try: import win32wnet
     except ImportError: pass
-    import re
     unc_expr = re.compile(r'(\\\\[^\\]+\\[^\\]+)(.*)')
-    
+
 _test_read = 1024 * 8
 _unknown = '(unknown)'
 
