@@ -384,7 +384,7 @@ class Wrapper:
 # TODO: replace apply
 _wrapper_method = '''def %(name)s %(arglist)s:
     """Wrapper for the %(name)s method."""
-    r = apply(self.__class__.__bases__[-1].%(name)s, %(baseargs)s)
+    r = self.__class__.__bases__[-1].%(name)s(*%(baseargs)s)
     try: _save_ob(self, self._local_path)
     except ValueError: pass
     return r
