@@ -132,7 +132,7 @@ def _set_content_type(ob, content_type, data):
         ob.content_type = content_type
     if hasattr(ob, 'content_type') and ob.content_type == 'text/html':
         if content_type == 'text/html': return
-        data = string.lower(string.strip(data))
+        data = data.strip().lower()
         if data[:6] != '<html>' and data[:14] != '<!doctype html':
             ob.content_type = 'text/plain'
 
@@ -168,7 +168,7 @@ def _list2typemap(l):
     for i in l:
         if i:
             try: 
-                e, t = string.split(i)
+                e, t = i.split()
                 c = ''
             except ValueError:
                 try: e, t, c = re.split('[ \t]+', i, 2)
@@ -233,7 +233,7 @@ def _list2iconmap(l):
     m = {}
     for i in l:
         if i:
-            try: k, v = string.split(i)
+            try: k, v = i.split()
             except ValueError: raise ValueError(_iconmap_error % i)
             m[k] = v
     return m
@@ -312,7 +312,7 @@ def _create_builtin_ob(c, id, file, path):
     
 def _create_ob_from_function(c, id, file, path):
     try:
-        i = string.rindex(c, '.')
+        i = c.rindex('.')
         m, c = c[:i], c[i+1:]
         m = __import__(m, globals(), locals(), (c,))
         c = getattr(m, c)
@@ -323,7 +323,7 @@ def _create_ob_from_function(c, id, file, path):
     
 def _create_ob_from_factory(c, id, file, path):
     try:
-        i = string.rindex(c, '.')
+        i = c.rindex('.')
         m, c = c[:i], c[i+1:]
         c = getObject(m, c)
         f = c()
@@ -627,7 +627,7 @@ class LocalDirectory(
         if (spec is not None):
             try:
                 if (type(spec) is type('')):
-                    spec = string.split(spec,' ')
+                    spec = spec.split(' ')
                 curdir = os.getcwd()
                 os.chdir(self.basepath)
                 l = []
@@ -816,16 +816,16 @@ class LocalDirectory(
             # First check for a UNIX full path. There will be no UNIX path
             # separators in a Windows path.
             if '/' in filename:
-                id=filename[string.rfind(filename,'/')+1:]
+                id=filename[filename.rfind('/')+1:]
             # Next check for Window separators. If there are no UNIX path
             # separators then it's probably a Windows path and not a random
             # relative UNIX path which happens to have backslashes in it.
             # Lets hope this never happens, anyway. ;)
             elif '\\' in filename:
-                id=filename[string.rfind(filename,'\\')+1:]
+                id=filename[filename.rfind('\\')+1:]
             # Not sure if we'll ever get a Mac path, but here goes...
             elif ':' in filename:
-                id=filename[string.rfind(filename,':')+1:]
+                id=filename[filename.rfind(':')+1:]
             # Else we have a filename with no path components so let's use 
             # that for the id.
             else:
@@ -1164,7 +1164,7 @@ class LocalDirectory(
         as a Zope object or None."""
         #***Andreas Don#t know why but self.default_document is sometimes empty
         try:
-            files = string.split(self.default_document)
+            files = self.default_document.split()
             for file in files:
                 path = self._getpath(file)
                 if (os.path.isfile(path)):
@@ -1262,7 +1262,7 @@ class LocalFile(
         targetpath=os.path.join(target, default)
         default_documents=self.parent.default_document
         if type(default_documents)==type(' '):
-            default_documents=string.split(default_documents,' ')
+            default_documents = default_documents.split(' ')
         for file in default_documents:
                 path = os.path.join(self.path, file)
                 if (os.path.isfile(path)):
@@ -1537,7 +1537,7 @@ class LocalFS(
 
         OFS.PropertyManager.PropertyManager.manage_editProperties(self,REQUEST)
         
-        if string.strip(self.file_filter)=='':
+        if self.file_filter.strip() == '':
             self.file_filter=None
         if self.file_filter=='None':
             self.file_filter=None
@@ -1632,7 +1632,7 @@ class LocalFS(
         """Return true if is Directory and has default doc"""
         #***Andreas Don#t know why but self.default_document is sometimes empty
         try:
-            files = string.split(self.default_document)
+            files = self.default_document.split()
             for file in files:
                 path = self._getpath(file)
                 if (os.path.isfile(path)):
