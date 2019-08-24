@@ -38,69 +38,47 @@
 #
 ##############################################################################
 """Local File System product"""
-__version__='2.0'
+__version__='$Revision: 2.0 $'[11:-2]
 __doc__="""Local File System product"""
 
-import sys, os, re, stat, glob as errno, time, tempfile
-from urllib.parse import quote
+import sys, os, string, re, stat, urllib, glob, errno, time, tempfile
 import App, Acquisition, Persistence, OFS
-import AccessControl
+import AccessControl, re
 from App.Extensions import getObject
 from App.FactoryDispatcher import ProductDispatcher
-#TODO from webdav.NullResource import LockNullResource
+# from webdav.NullResource import NullResource
 from ZPublisher.HTTPResponse import HTTPResponse
+# from Globals import MessageDialog, HTMLFile
 from App.Dialogs import MessageDialog
 from App.special_dtml import HTMLFile
+from zope.contenttype import find_binary
 from OFS.Image import Pdata
 from TreeDisplay.TreeTag import encode_str
-from OFS.CopySupport import _cb_encode, _cb_decode, CopyError
-# The following MessageDialog are no longer available from OFS.CopySupport
-eNoData=MessageDialog(
-        title='No Data',
-        message='No clipboard data found.',
-        action ='manage_main',)
-
-eInvalid=MessageDialog(
-         title='Clipboard Error',
-         message='The data in the clipboard could not be read, possibly due ' \
-         'to cookie data being truncated by your web browser. Try copying ' \
-         'fewer objects.',
-         action ='manage_main',)
-
-eNotFound=MessageDialog(
-          title='Item Not Found',
-          message='One or more items referred to in the clipboard data was ' \
-          'not found. The item may have been moved or deleted after you ' \
-          'copied it.',
-          action ='manage_main',)
-
+from OFS.CopySupport import _cb_encode, _cb_decode, CopyError, eNoData, eInvalid, eNotFound
 from ZODB.TimeStamp import TimeStamp
 from DateTime import DateTime
+from types import StringType
 import marshal  # sbk
 from ZPublisher import xmlrpc # sbk
-try: 
-    from OFS.role import RoleManager 
-except ImportError: 
-    # Zope <=2.12 
-    from AccessControl.Role import RoleManager
-from zExceptions import BadRequest, Forbidden, Unauthorized, NotFound, MethodNotAllowed
-class UploadError(Exception): pass
-class RenameError(Exception): pass
-class DeleteError(Exception): pass
+
+ITERATORS_PRESENT=0
 try:
-    from StreamingFile import StreamingFile, StreamingImage
+    from StreamingFile import StreamingFile
     ITERATORS_PRESENT=1
 except:
     ITERATORS_PRESENT=0
+    
+# ***SmileyChris
 from Products.PageTemplates.ZopePageTemplate import ZopePageTemplate
-from Products.PythonScripts.PythonScript import PythonScript
 
 _iswin32 = (sys.platform == 'win32')
+
 if (_iswin32):
     try: import win32wnet
     except ImportError: pass
+    import re
     unc_expr = re.compile(r'(\\\\[^\\]+\\[^\\]+)(.*)')
-
+    
 _test_read = 1024 * 8
 _unknown = '(unknown)'
 
@@ -122,24 +100,20 @@ _unknown = '(unknown)'
 
 def _get_content_type(ext, _type_map):
     """_get_content_type"""
-    try: 
-        return _type_map[ext]
-    except KeyError:
-        return (None, None)
-
+    try: return _type_map[ext]
+    except KeyError: return (None, None)
+    
 def _set_content_type(ob, content_type, data):
     """_set_content_type"""
     if content_type:
         ob.content_type = content_type
     if hasattr(ob, 'content_type') and ob.content_type == 'text/html':
-        if content_type == 'text/html':
-            return
-        data = data.strip().lower()
+        if content_type == 'text/html': return
+        data = string.lower(string.strip(data))
         if data[:6] != '<html>' and data[:14] != '<!doctype html':
             ob.content_type = 'text/plain'
 
 _types = {
-    '.py': ('text/x-python', 'PythonScript'),
     '.html': ('text/html', 'DTMLDocument'),
     '.htm': ('text/html', 'DTMLDocument'),
     '.dtml': ('text/html', 'DTMLMethod'),
@@ -147,8 +121,8 @@ _types = {
     '.jpg': ('image/jpeg', 'Image'),
     '.jpeg': ('image/jpeg', 'Image'),
     '.png': ('image/png', 'Image'),
-    '.pt': ('text/html', 'PageTemplate'),
-    '.zpt': ('text/html', 'PageTemplate'),
+    '.pt': ('text/html', 'PageTemplate'),  # ***SmileyChris
+    '.zpt': ('text/html', 'PageTemplate'),  # ***SmileyChris
     '.ra': ('audio/vnd.rn-realaudio', ''),
     '.rv': ('video/vnd.rn-realvideo', ''),
     '.rm': ('application/vnd.rn-realmedia', ''),
@@ -165,32 +139,28 @@ _typemap_error = "Error parsing type map: '%s'"
 
 def _list2typemap(l):
     """_list2typemap"""
-    if not l:
-        return
+    if not l: return
     m = {}
     for i in l:
         if i:
             try: 
-                e, t = i.split()
+                e, t = string.split(i)
                 c = ''
             except ValueError:
-                try: 
-                    e, t, c = re.split('[ \t]+', i, 2)
-                except ValueError:
-                    raise ValueError(_typemap_error % i)
+                try: e, t, c = re.split('[ \t]+', i, 2)
+                except ValueError: raise ValueError(_typemap_error % i)
             m[e] = (t, c)
     return m
 
 def _typemap2list(m):
     """_typemap2list"""
     l = []
-    keys = sorted(m.keys())
+    keys = m.keys()
+    keys.sort()
     for k in keys:
         v = m[k]
-        if type(v) is type(()): 
-            l.append("".join((k, v[0], v[1])))
-        else:
-            l.append("".join((k, v)))
+        if type(v) is type(()): l.append(string.join((k, v[0], v[1])))
+        else: l.append(string.join((k, v)))
     return l
     
 _icons = {
@@ -236,30 +206,28 @@ _iconmap_error = "Error parsing icon map: '%s'"
 
 def _list2iconmap(l):
     """_list2iconmap"""
-    if not l:
-        return
+    if not l: return
     m = {}
     for i in l:
         if i:
-            try:
-                k, v = i.split()
-            except ValueError:
-                raise ValueError(_iconmap_error % i)
+            try: k, v = string.split(i)
+            except ValueError: raise ValueError(_iconmap_error % i)
             m[k] = v
     return m
 
 def _iconmap2list(m):
     """_iconmap2list"""
     l = []
-    keys = sorted(m.keys())
+    keys = m.keys()
+    keys.sort()
     for k in keys:
-        l.append("".join((k, m[k])))
+        l.append(string.join((k, m[k])))
     return l
 
 def _create_ob(id, file, path, _type_map):
     """_create_ob"""
     ob = None
-    ext = os.path.splitext(path)[-1]
+    ext=os.path.splitext(path)[-1]
     t, c = _get_content_type(ext, _type_map)
     if c is not None:
         ob = _create_builtin_ob(c, id, file, path)
@@ -270,10 +238,10 @@ def _create_ob(id, file, path, _type_map):
     if ob is None:
         ob = _wrap_ob(_create_File(id, file), path)
     file.seek(0)
-    ob.__doc__ = 'LocalFile'
+    ob.__doc__='LocalFile'
     _set_content_type(ob, t, file.read(_test_read))
     return ob
-
+    
 def _create_DTMLMethod(id, file):
     """_create_DTMLMethod"""
     return OFS.DTMLMethod.DTMLMethod(file.read(), __name__=id)
@@ -284,8 +252,6 @@ def _create_DTMLDocument(id, file):
 
 def _create_Image(id, file):
     """_create_Image"""
-    if ITERATORS_PRESENT==1:
-        return StreamingImage(id, '', file)
     return OFS.Image.Image(id, '', file)
 
 def _create_File(id, file):
@@ -294,23 +260,16 @@ def _create_File(id, file):
         return StreamingFile(id, '', file)
     return OFS.Image.File(id, '', file)
 
+# ***SmileyChris
 def _create_ZPT(id, file):
-    """_create_ZPT"""
     return ZopePageTemplate(id, file, content_type='text/html')
 
-def _create_PythonScript(id, file):
-    """_create_PythonScript"""
-    ob = PythonScript(id)
-    ob.write(file.read())
-    return ob
-
 _builtin_create = {
-    'PythonScript': _create_PythonScript,
     'DTMLMethod': _create_DTMLMethod,
     'DTMLDocument': _create_DTMLDocument,
     'Image': _create_Image,
     'File': _create_File,
-    'PageTemplate': _create_ZPT,
+    'PageTemplate': _create_ZPT,  # ***SmileyChris
 }
 
 def _create_builtin_ob(c, id, file, path):
@@ -321,18 +280,18 @@ def _create_builtin_ob(c, id, file, path):
     
 def _create_ob_from_function(c, id, file, path):
     try:
-        i = c.rindex('.')
+        i = string.rindex(c, '.')
         m, c = c[:i], c[i+1:]
         m = __import__(m, globals(), locals(), (c,))
         c = getattr(m, c)
-        f = getattr(c, 'createSelf').__func__ # TODO: does it have __func__?
-        if f.__code__.co_varnames == ('id', 'file'):
+        f = getattr(c, 'createSelf').im_func
+        if f.func_code.co_varnames == ('id', 'file'):
             return _wrap_ob(f(id, file), path)
     except: pass
     
 def _create_ob_from_factory(c, id, file, path):
     try:
-        i = c.rindex('.')
+        i = string.rindex(c, '.')
         m, c = c[:i], c[i+1:]
         c = getObject(m, c)
         f = c()
@@ -341,50 +300,22 @@ def _create_ob_from_factory(c, id, file, path):
         return ob
     except: pass
 
-
 class Wrapper:
     """Mix-in class used to save object changes."""
     _local_path = None
-    # Create a global and persistent lock table
-    _dav_writelocks = {}
-    # The object itself is not persistent and cannot be stored
-    _p_changed = 0
 
-    # TODO: Zope does not use bobobase*    
     def bobobase_modification_time(self):
-        """ bobobase_modification_time """
         t = os.stat(self._local_path)[stat.ST_MTIME]
         return DateTime(t)
-    
+
     def __repr__(self):
-        """ __repr__ """
         c = self.__class__.__bases__[-1].__name__
         return '<%s ObjectWrapper instance at %8X>' % (c, id(self))
-    
-    def wl_lockmapping(self, killinvalids=0, create=0):
-        """ Overwrite the default method of LockableItem """
-        locks = self._dav_writelocks.get(self._local_path)
-        if locks is None:
-            locks = {}
-            if create:
-                # Store it in persistent lock table
-                self._dav_writelocks[self._local_path] = locks
-        elif killinvalids:
-            # Delete invalid locks
-            for token, lock in locks.items():
-                if not lock.isValid():
-                    del locks[token]
-            if not locks and not create:
-                # Remove empty lock table
-                del self._dav_writelocks[self._local_path]
-        return locks
-
-
+        
 _wrapper_method = '''def %(name)s %(arglist)s:
     """Wrapper for the %(name)s method."""
-    r = self.__class__.__bases__[-1].%(name)s(*%(baseargs)s)
-    try:
-        _save_ob(self, self._local_path)
+    r = apply(self.__class__.__bases__[-1].%(name)s, %(baseargs)s)
+    try: _save_ob(self, self._local_path)
     except ValueError: pass
     return r
 '''
@@ -392,31 +323,23 @@ _wrapper_method = '''def %(name)s %(arglist)s:
 _wrappers = {}
 
 def _get_wrapper(c):
-    try:
-        return _wrappers[c]
+    try: return _wrappers[c]
     except KeyError:
         class ObjectWrapper(Wrapper, c): pass
         _wrap_method(ObjectWrapper, 'manage_edit')
         _wrap_method(ObjectWrapper, 'manage_upload')
-        _wrap_method(ObjectWrapper, 'pt_edit')
-        _wrap_method(ObjectWrapper, 'write') # PythonScript
-        _wrap_method(ObjectWrapper, 'ZBindingsHTML_editAction') # PythonScript
-        _wrap_method(ObjectWrapper, 'PUT')
-        # Remove management options that cannot be used 
-        manage_options = []
-        for opt in ObjectWrapper.manage_options:
-            if opt['label'] not in ('Properties', 'Security', 'Undo',
-                    'Ownership', 'Interfaces', 'Proxy', 'History'):
-                manage_options.append(opt)
-        ObjectWrapper.manage_options = tuple(manage_options)
+        _wrap_method(ObjectWrapper, 'pt_edit')  # ***SmileyChris   PT ZMI editing
         _wrappers[c] = ObjectWrapper
         return ObjectWrapper
 
 def _wrap_method(c, name):
-    try: f = getattr(c.__bases__[-1], name)
+    try: m = getattr(c.__bases__[-1], name)
     except AttributeError: return
-    a = list(f.__code__.co_varnames)[:f.__code__.co_argcount]
-    d = f.__defaults__ or () # to avoid len(None)
+    f = m.im_func
+    a = list(f.func_code.co_varnames)[:f.func_code.co_argcount]
+    # *** SmileyChris d = f.func_defaults    replaced with next line so we don't get a len(None)!
+    # ***                                    this makes pt_edit work...
+    d = f.func_defaults or ()
     arglist = []
     baseargs = []
     while (len(a) > len(d)):
@@ -426,10 +349,11 @@ def _wrap_method(c, name):
     for i in range(len(a)):
         arglist.append('%s=%s' % (a[i], repr(d[i])))
         baseargs.append(a[i])
-    arglist = '(' + ','.join(arglist) + ')'
-    baseargs = '(' + ','.join(baseargs) + ')'
+    arglist= '(' + string.join(arglist, ',') + ')'
+    baseargs = '(' + string.join(baseargs, ',') + ')'
     d = {}
-    exec(_wrapper_method % vars(), globals(), d)
+    exec(_wrapper_method % vars(), globals, d)
+#    exec _wrapper_method % vars() in globals(), d)
     setattr(c, name, d[name])
 
 def _wrap_ob(ob, path):
@@ -445,7 +369,6 @@ def _wrap_ob(ob, path):
         ob.__class__ = c
     ob._local_path = path
     ob.__name__ = n
-    ob._p_oid = path
     return ob
 
 def _save_DTML(ob, path):
@@ -456,12 +379,15 @@ def _save_DTML(ob, path):
        f.close()
 
 def _save_File(ob, path):
-    if isinstance(ob.data, Pdata):
+    if hasattr(ob.data, '__class__') and ob.data.__class__ is Pdata:
         f = open(path, 'wb')
         f.write(str(ob.data))
         f.close()
     else:
-        f = open(path, 'wb')
+        if find_binary(ob.data) >= 0:
+            f = open(path, 'wb')
+        else:
+            f = open(path, 'w')
         f.write(ob.data)
         f.close()
 
@@ -469,13 +395,12 @@ def _save_Folder(ob, path):
     os.mkdir(path)
     
 _builtin_save = {
-    'Script (Python)': _save_DTML,
     'DTML Method': _save_DTML,
     'DTML Document': _save_DTML,
     'Image': _save_File,
     'File': _save_File,
     'Folder': _save_Folder,
-    'Page Template': _save_DTML,
+    'Page Template': _save_DTML,  # ***SmileyChris
 }
 
 def _save_builtin_ob(ob, path):
@@ -508,21 +433,19 @@ def _save_ob(ob, path):
 
 def _set_timestamp(ob, path):
     t = os.stat(path)[stat.ST_MTIME]
-    t = TimeStamp(*time.gmtime(t)[:6])
-    ob._p_serial = t.raw()
+    t = apply(TimeStamp, time.gmtime(t)[:6])
+    ob._p_serial = repr(t)
     
 _marker=[]
 
 def valid_id(id):
-    if id == os.curdir or id == os.pardir or id[0] == '_':
-        return 0
+    if id == os.curdir or id == os.pardir or id[0] == '_': return 0
     return 1
     
-bad_id = re.compile('[^a-zA-Z0-9-_~,. ]').search #TS
+bad_id=re.compile('[^a-zA-Z0-9-_~,. ]').search #TS
 
 def absattr(attr):
-    if callable(attr):
-        return attr()
+    if callable(attr): return attr()
     return attr
 
 def sanity_check(c, ob):
@@ -531,9 +454,7 @@ def sanity_check(c, ob):
     # subobjects, which is an undefined situation.
     dest = c.basepath
     src = ob._local_path
-    if dest[:len(src)] != src:
-        return 1
-    return 0
+    if dest[:len(src)] != src: return 1
 
 class LocalDirectory(
     OFS.CopySupport.CopyContainer,
@@ -544,14 +465,14 @@ class LocalDirectory(
     
     """Object representing a directory in the local file system."""
 
-    meta_type = 'Local Directory'
+    meta_type='Local Directory'
     
-    isPrincipiaFolderish = 0   # 0 to avoid slow down of ZMI
-    manage_addProduct = ProductDispatcher()
+    isPrincipiaFolderish=0   # ***SmileyChris was 1 - changed because it can slow ZMI down quite a bit
+    manage_addProduct=ProductDispatcher()
 
     manage_main = HTMLFile('dtml/main', globals())
     index_html = HTMLFile('dtml/methodBrowse', globals())
-    manage_uploadForm = HTMLFile('dtml/methodUpload', globals())
+    manage_uploadForm=HTMLFile('dtml/methodUpload', globals())
     
     manage_options = (
         {'label':'Contents', 'action':'manage_main'},
@@ -564,10 +485,8 @@ class LocalDirectory(
     security = AccessControl.ClassSecurityInfo()  # sbk
 
     security.declareProtected('FTP access','manage_FTPstat','manage_FTPget','manage_FTPlist')  # sbk
-
     
-    def __init__(self, id, basepath, root, tree_view, catalog, _type_map,
-                 _icon_map, file_filter=None):
+    def __init__(self, id, basepath, root, tree_view, catalog, _type_map, _icon_map, file_filter=None):
         """LocalDirectory __init__"""
         self.id = id
         self.basepath = self._local_path = basepath
@@ -580,11 +499,11 @@ class LocalDirectory(
 
     def __bobo_traverse__(self, REQUEST, name):
         """ bobo_traverse """
-        method = REQUEST.get('REQUEST_METHOD', 'GET').upper()
+        method=REQUEST.get('REQUEST_METHOD', 'GET').upper()
         try:
             # FTP - PUT
             if not method in ('GET', 'POST', 'HEAD'):
-               return None # LockNullResource(self, name, REQUEST).__of__(self)
+               return None # TODO NullResource(self, name, REQUEST).__of__(self)
         except:
             pass
         try:
@@ -606,16 +525,12 @@ class LocalDirectory(
         #    HTTPResponse().notFoundError(name)  # ***
         
     def __getitem__(self, i):
-        if isinstance(i, str):
-            return self._safe_getOb(i)
-        else:
-            raise TypeError('index must be a string')
+        if (type(i) is StringType): return self._safe_getOb(i)
+        else: raise TypeError('index must be a string')
         
     def __getattr__(self, attr):
-        try:
-            return self._safe_getOb(attr)
-        except NotFound:
-            raise AttributeError(attr)
+        try: return self._safe_getOb(attr)
+        except 'NotFound': raise AttributeError(attr)
     
     def _getpath(self, id):
         return os.path.join(self.basepath, id)
@@ -629,19 +544,19 @@ class LocalDirectory(
     def _ids(self, spec=None):
         if spec is None:
             spec=self.file_filter
-        try:
-            ids = os.listdir(self.basepath)
+        try: ids = os.listdir(self.basepath)
         except (OSError, IOError) as err:
             if err[0] == errno.EACCES:
-                raise Forbidden(HTTPResponse()._error_html(
-                    'Forbidden',
-                    'Sorry, you do not have permission to read '
-                    'the requested directory.<p>'))
+                raise IOError
+# TODO:                raise 'Forbidden', HTTPResponse()._error_html(
+#                    'Forbidden',
+#                    'Sorry, you do not have permission to read '
+#                    'the requested directory.<p>')
             else: raise
         if (spec is not None):
             try:
                 if (type(spec) is type('')):
-                    spec = spec.split(' ')
+                    spec = string.split(spec,' ')
                 curdir = os.getcwd()
                 os.chdir(self.basepath)
                 l = []
@@ -657,7 +572,8 @@ class LocalDirectory(
                 ids = l
             finally:
                 os.chdir(curdir)
-        ids = sorted(filter(valid_id, ids))
+        ids = filter(valid_id, ids)
+        ids.sort()
         return ids
         
     def _safe_getOb(self, name, default=_marker):
@@ -683,9 +599,12 @@ class LocalDirectory(
         return ob.__of__(self)
                     
     def _setObject(self, id, object, roles=None, user=None):
-        if getattr(object, '__locknull_resource__', 0):
+        try: 
+            put = getattr(self.aq_parent,'__null_resource__')
+        except: 
+            put = None
+        if put:            
             self._checkId(id,1)
-            return id
         else:
             self._checkId(id)
         self._safe_setOb(id, object)
@@ -699,38 +618,46 @@ class LocalDirectory(
         # with the given id already exists. If allow_dup is true,
         # only check that the id string contains no illegal chars.
         if not id:
-            raise BadRequest('No id was specified')
+            raise Exception('Bad Request' + ': no id was specified')
+# TODO            raise 'Bad Request', 'No id was specified'
         if bad_id(id):
-            raise BadRequest(
-                'The id %s contains characters illegal in filenames.' % id)
+            raise Exception('Bad Request' + ': the id %s contains characters illegal in filenames.' % id)
+# TODO            raise 'Bad Request', (
+#            'The id %s contains characters illegal in filenames.' % id)
         if id[0]=='_':
-            raise BadRequest(
-                'The id %s  is invalid - it begins with an underscore.'  % id)
+            raise Exception('Bad Request' + ': the id %s  is invalid - it begins with an underscore.'  % id)
+# TODO            raise 'Bad Request', (
+#            'The id %s  is invalid - it begins with an underscore.'  % id)
         if not allow_dup:
             path = self._getpath(id)
             if os.path.exists(path):
-                raise BadRequest(
-                    'The id %s is invalid - it is already in use.' % id)
+                raise Exception('Bad Request' + ': the id %s is invalid - it is already in use.' % id)
+#TODO                raise 'Bad Request', (
+#                    'The id %s is invalid - it is already in use.' % id)
 
     def _safe_setOb(self, id, ob):
         try: self._setOb(id, ob)
         except EnvironmentError as err: 
             if (err[0] == errno.EACCES):
-                raise Forbidden(HTTPResponse()._error_html(
-                    'Forbidden',
-                    "Sorry, you do not have permission to write "
-                    "to this directory.<p>"))
+                raise Exception('Forbidden' + ': you do not have permission to write to this directory')
+# TODO                raise 'Forbidden', HTTPResponse()._error_html(
+#                    'Forbidden',
+#                    "Sorry, you do not have permission to write "
+#                    "to this directory.<p>")
             else: raise
         
     def _setOb(self, id, ob):
         if not hasattr(ob, 'meta_type'):
-            raise BadRequest('Unknown object type.')
+            raise Exception('Bad Request' + ': unknown object type.')
+# TODO            raise 'Bad Request', 'Unknown object type.'
         path = self._getpath(id)
         try: _save_ob(ob, path)
         except TypeError:
-            raise BadRequest(
-                "Cannot add objects of type '%s' to local directories."
-                % ob.meta_type)
+            raise Exception('Bad Request' + "Cannot add objects of type '%s' to local directories." % ob.meta_type)
+#                
+# TODO           raise 'Bad Request', (
+#                "Cannot add objects of type '%s' to local directories."
+#                % ob.meta_type)
 
     def _delOb(self, id):
         path = self._getpath(id)
@@ -744,14 +671,14 @@ class LocalDirectory(
         except EnvironmentError as err:
             if (err[0] == errno.EACCES):
                 if t == 'directory' and os.listdir(path):
-                    raise DeleteError(HTTPResponse()._error_html(
-                        'DeleteError',
-                        "The directory '%s' is not empty." % id))
+                    e = 'Delete Error'
+                    m = "The directory '%s' is not empty." % id
                 else:
-                    raise Forbidden(HTTPResponse()._error_html(
-                        'Forbidden',
-                        "Sorry, you do not have permission to delete " \
-                        "the requested %s ('%s')." % (t, id)))
+                    e = 'Forbidden'
+                    m = "Sorry, you do not have permission to delete " \
+                        "the requested %s ('%s')." % (t, id)
+                raise Exception(e + ': ' + m)
+# TODO                raise e, HTTPResponse()._error_html(e, m)
             else: raise
 
     def _copyOb(self, id, ob):
@@ -760,65 +687,64 @@ class LocalDirectory(
     def _moveOb(self, id, ob):
         src = ob._local_path
         dest = self._getpath(id)
-        try: 
-            os.rename(src, dest)
+        try: os.rename(src, dest)
         except EnvironmentError as err: 
             if (err[0] == errno.EACCES):
-                raise Forbidden(HTTPResponse()._error_html(
-                    'Forbidden',
-                    "Sorry, you do not have permission to write "
-                    "to this directory.<p>"))
+                raise Exception('Forbidden' + ': no permission to write.')
+# TODO                raise 'Forbidden', HTTPResponse()._error_html(
+#                    'Forbidden',
+#                    "Sorry, you do not have permission to write "
+#                    "to this directory.<p>")
             else: raise
         
     def _verifyObjectPaste(self, ob, REQUEST):
         pass
             
-    def _write_file(self, pfile, path):
+    def _write_file(self, file, path):
         try:
-            if isinstance(pfile, str):
+            if type(file) is StringType:
                 outfile=open(path,'wb')
-                outfile.write(pfile)
+                outfile.write(file)
                 outfile.close()
             else:
                 blocksize=8*1024
                 outfile=open(path,'wb')
-                data=pfile.read(blocksize)
+                data=file.read(blocksize)
                 while data:
                     outfile.write(data)
-                    data=pfile.read(blocksize)
+                    data=file.read(blocksize)
                 outfile.close()
         except EnvironmentError as err: 
             if (err[0] == errno.EACCES):
-                raise Forbidden(HTTPResponse()._error_html(
-                    'Forbidden',
-                    "Sorry, you do not have permission to write "
-                    "to this directory.<p>"))
+                raise Exception('Forbidden' + ': no permission to write.')
+# TODO                raise 'Forbidden', HTTPResponse()._error_html(
+#                    'Forbidden',
+#                    "Sorry, you do not have permission to write "
+#                    "to this directory.<p>")
             else: raise
 
     def manage_createDirectory(self, path, action='manage_workspace', REQUEST=None):
         """Create a new directory relative to this directory."""
-        parts = os.path.split(path)
-        parts = filter(lambda p: p not in ('.','..'),parts)
-        path = os.path.join(*parts)
-        fullpath = os.path.join(self.basepath,path)
+        parts=os.path.split(path)
+        parts=filter(lambda p: p not in ('.','..'),parts)
+        path=apply(os.path.join,parts)
+        fullpath=os.path.join(self.basepath,path)
         if os.path.exists(fullpath):
-            if REQUEST:
-                return MessageDialog(
+            if REQUEST: return MessageDialog(
                         title='OK',
                         message='The directory already exists.',
                         action=action)
         else:
-            try:
-                os.makedirs(fullpath)
+            try: os.makedirs(fullpath)
             except EnvironmentError as err: 
                 if (err[0] == errno.EACCES):
-                    raise Forbidden(HTTPResponse()._error_html(
-                        'Forbidden',
-                        "Sorry, you do not have permission to write "
-                        "to this directory.<p>"))
+                    raise Exception('Forbidden' + ': no permission to write.')
+# TODO                    raise 'Forbidden', HTTPResponse()._error_html(
+#                        'Forbidden',
+#                       "Sorry, you do not have permission to write "
+#                        "to this directory.<p>")
                 else: raise
-            if REQUEST:
-                return MessageDialog(
+            if REQUEST: return MessageDialog(
                         title='Success!',
                         message='The directory has been created.',
                         action=action)
@@ -827,90 +753,84 @@ class LocalDirectory(
         """Upload a file to the local file system. The 'file' parameter
         is a FileUpload instance representing the uploaded file."""
         if hasattr(file,'filename'):
-            filename = file.filename
+            filename=file.filename
         else:
-            filename = file.name
+            filename=file.name
         if not id:
             # Try to determine the filename without any path.
             # First check for a UNIX full path. There will be no UNIX path
             # separators in a Windows path.
             if '/' in filename:
-                id = filename[filename.rfind('/')+1:]
+                id=filename[string.rfind(filename,'/')+1:]
             # Next check for Window separators. If there are no UNIX path
             # separators then it's probably a Windows path and not a random
             # relative UNIX path which happens to have backslashes in it.
             # Lets hope this never happens, anyway. ;)
             elif '\\' in filename:
-                id = filename[filename.rfind('\\')+1:]
+                id=filename[string.rfind(filename,'\\')+1:]
             # Not sure if we'll ever get a Mac path, but here goes...
             elif ':' in filename:
-                id = filename[filename.rfind(':')+1:]
+                id=filename[string.rfind(filename,':')+1:]
             # Else we have a filename with no path components so let's use 
             # that for the id.
             else:
-                id = filename
+                id=filename
 
-        try:
-            self._checkId(id,1)
+        try: self._checkId(id,1)
         except:
-            raise UploadError(MessageDialog(
-                title='Invalid Id',
-                message=sys.exc_value,
-                action='manage_main'))
+            raise Exception('Upload Error: invalid Id')
+# TODO raise 'Upload Error', MessageDialog(
+#                      title='Invalid Id',
+#                      message=sys.exc_value,
+#                      action ='manage_main')
         path = self._getpath(id)
-        if os.path.exists(path):
-            self.manage_overwrite(file, path, REQUEST)
-        else:
-            self._write_file(file, path)
+        if os.path.exists(path): self.manage_overwrite(file, path, REQUEST)
+        else: self._write_file(file, path)
+                
         if REQUEST: 
-            if action == 'index_fs':
-                # do not show a MessageDialog if called from PloneLocalFS
-                REQUEST['RESPONSE'].redirect(self.absolute_url() + '/index_fs?portal_status_message=Your%20file%20has%20been%20uploaded')
+            if action=='index_fs':	#*** Andreas do not show a MessageDialog if called from PloneLocalFS
+                REQUEST['RESPONSE'].redirect(self.absolute_url()+'/index_fs?portal_status_message=Your%20file%20has%20been%20uploaded')
             else:
-                return MessageDialog(
-                    title = 'Success!',
-                    message = 'Your file has been uploaded.',
-                    action = action)
+                    return MessageDialog(
+                    title='Success!',
+                    message='Your file has been uploaded.',
+                    action=action)
     
     def manage_overwrite(self, file, path, REQUEST=None):
         """Overwrite a local file."""
         if REQUEST is None and hasattr(self, 'aq_acquire'):
-            try: 
-                REQUEST = self.aq_acquire('REQUEST')
+            try: REQUEST=self.aq_acquire('REQUEST')
             except: pass
-        try: 
-             user = REQUEST['AUTHENTICATED_USER']
-        except:
-             user = None
+        try: user=REQUEST['AUTHENTICATED_USER']
+        except: user = None
         if user is None or not user.has_permission('Overwrite local files', self):
-            raise Unauthorized(HTTPResponse()._error_html(
-                    'Unauthorized',
-                    "Sorry, you are not authorized to overwrite files.<p>"))
+            raise Exception('Unauthorized: cannot overwrite files')
+# TODO            raise 'Unauthorized', HTTPResponse()._error_html(
+#                    'Unauthorized',
+#                    "Sorry, you are not authorized to overwrite files.<p>")
         self._write_file(file, path)
     
     def manage_renameObject(self, id, new_id, REQUEST=None):
         """Rename a file or subdirectory."""
-        try:
-            self._checkId(new_id)
+        try: self._checkId(new_id)
         except:
-            raise RenameError(MessageDialog(
-                      title='Invalid Id',
-                      message=sys.exc_value,
-                      action ='manage_main'))
+            raise Exception('Rename Error: invalid Id')
+# TODO raise 'Rename Error', MessageDialog(
+#                      title='Invalid Id',
+#                      message=sys.exc_value,
+#                      action ='manage_main')
         f = self._getpath(id)
         t = self._getpath(new_id)
-        try:
-            os.rename(f, t)
+        try: os.rename(f, t)
         except EnvironmentError as err:
             if (err[0] == errno.EACCES):
-                if os.path.isdir(f):
-                    t = 'directory'
-                else:
-                    t = 'file'
-                raise RenameError(HTTPResponse()._error_html(
-                    'RenameError'
-                    "Sorry, you do not have permission to rename " \
-                    "the requested %s ('%s')." % (t, id)))
+                if os.path.isdir(f): t = 'directory'
+                else: t = 'file'
+                e = 'Rename Error'
+                m = "Sorry, you do not have permission to rename " \
+                    "the requested %s ('%s')." % (t, id)
+                raise Exception(e + ': ' + m)
+# TODO                raise e, HTTPResponse()._error_html(e, m)
             else: raise
         if REQUEST is not None:
             return self.manage_main(self, REQUEST, update_menu=1)
@@ -919,16 +839,16 @@ class LocalDirectory(
         """Put a reference to the objects named in ids in the clipboard,
         marked for a cut operation."""
         if type(ids) is type(''):
-            ids = [ids]
+            ids=[ids]
         oblist = []
         for id in ids:
             ob = self._safe_getOb(id)
             m = FileMoniker(ob)
             oblist.append(m.ids)
-        cp = (1, oblist)
-        cp = _cb_encode(cp)
+        cp=(1, oblist)
+        cp=_cb_encode(cp)
         if REQUEST is not None:
-            resp = REQUEST['RESPONSE']
+            resp=REQUEST['RESPONSE']
             resp.setCookie('__lcp', cp, path='%s' % REQUEST['SCRIPT_NAME'])
             return self.manage_main(self, REQUEST, cb_dataValid=1)
         return cp
@@ -937,16 +857,16 @@ class LocalDirectory(
         """Put a reference to the objects named in ids in the clipboard,
         marked for a copy operation."""
         if type(ids) is type(''):
-            ids = [ids]
+            ids=[ids]
         oblist = []
         for id in ids:
             ob = self._safe_getOb(id)
             m = FileMoniker(ob)
             oblist.append(m.ids)
-        cp = (0, oblist)
-        cp = _cb_encode(cp)
+        cp=(0, oblist)
+        cp=_cb_encode(cp)
         if REQUEST is not None:
-            resp = REQUEST['RESPONSE']
+            resp=REQUEST['RESPONSE']
             resp.setCookie('__lcp', cp, path='%s' % REQUEST['SCRIPT_NAME'])
             return self.manage_main(self, REQUEST, cb_dataValid=1)
         return cp
@@ -955,47 +875,45 @@ class LocalDirectory(
         """Paste objects from the clipboard into the current directory.
         The cb_copy_data parameter, if specified, should be the result 
         of a previous call to manage_cutObjects or manage_copyObjects."""
-        cp = None
+        cp=None
         if cb_copy_data is not None:
-            cp = cb_copy_data
+            cp=cb_copy_data
         else:
             if REQUEST and REQUEST.has_key('__lcp'):
-                cp = REQUEST['__lcp']
+                cp=REQUEST['__lcp']
         if cp is None:
             raise CopyError(eNoData)
         
-        try: cp = _cb_decode(cp)
+        try: cp=_cb_decode(cp)
         except: raise CopyError(eInvalid)
 
-        oblist = []
-        m = FileMoniker()
-        op = cp[0]
+        oblist=[]
+        m=FileMoniker()
+        op=cp[0]
         for ids in cp[1]:
-            m.ids = ids
-            try:
-                ob = m.bind(self.root or self)
-            except:
-                raise CopyError(eNotFound)
+            m.ids=ids
+            try: ob=m.bind(self.root or self)
+            except: raise CopyError(eNotFound)
             self._verifyObjectPaste(ob, REQUEST)
             oblist.append(ob)
 
-        if op == 0:
+        if op==0:
             # Copy operation
             for ob in oblist:
-                id = self._get_id(absattr(ob.id))
+                id=self._get_id(absattr(ob.id))
                 self._copyOb(id, ob)
 
             if REQUEST is not None:
                 return self.manage_main(self, REQUEST, update_menu=1,
                                         cb_dataValid=1)
 
-        if op == 1:
+        if op==1:
             # Move operation
             for ob in oblist:
                 id = absattr(ob.id)
                 if not sanity_check(self, ob):
                     raise CopyError('This object cannot be pasted into itself')
-                id = self._get_id(id)
+                id=self._get_id(id)
                 self._moveOb(id, ob)
 
             if REQUEST is not None:
@@ -1008,36 +926,33 @@ class LocalDirectory(
 
     def cb_dataValid(self):
         """Return true if clipboard data seems valid."""
-        try:
-            cp = _cb_decode(self.REQUEST['__lcp'])
-        except:
-            return 0
+        try:    cp=_cb_decode(self.REQUEST['__lcp'])
+        except: return 0
         return 1
         
     def manage_delObjects(self, ids=[], REQUEST=None):
         """Delete files or subdirectories."""
-        if type(ids) is type(''):
-            ids=[ids]
+        if type(ids) is type(''): ids=[ids]
         if not ids:
             return MessageDialog(title='No items specified',
                    message='No items were specified!',
                    action ='manage_main',)
         while ids:
-            id = ids[-1]
+            id=ids[-1]
             path = self._getpath(id)
             if not os.path.exists(path):
-                raise BadRequest('%s does not exist' % ids[-1])
+                raise Exception('BadRequest' + ': %s does not exist' % ids[-1])
             self._delObject(id)
             del ids[-1]
         if REQUEST is not None:
                 return self.manage_main(self, REQUEST, update_menu=1)
-
+        
     def fileIds(self, spec=None):
         """Return a list of subobject ids.
         If 'spec' is specified, return only objects whose filename 
         matches 'spec'."""
         if spec is None:
-            spec = self.file_filter
+            spec=self.file_filter
         return self._ids(spec)
     
     def fileValues(self, spec=None, propagate=1):
@@ -1045,19 +960,19 @@ class LocalDirectory(
         If 'spec' is specified, return only objects whose filename 
         matches 'spec'."""
         if spec is None:
-            spec = self.file_filter	
+            spec=self.file_filter	
         r = []
         a = r.append
-        g = self._getfileob
+        g=self._getfileob
         if propagate:
             for id in self._ids(spec): a(g(id, spec))
         else:
             for id in self._ids(spec): a(g(id))
         #sort that directories come first
-        res = []
+        res=[]
         for v in r:
-            s = '%s%s' %((v.type!='directory'),v.id)
-            res.append((s,v))
+            s='%s%s' %((v.type!='directory'),v.id)
+            res.append( (s,v) )
         res.sort()    
         
         return [ x[1] for x in res ]
@@ -1069,9 +984,9 @@ class LocalDirectory(
         """
         if spec is None:
             spec=self.file_filter
-        r = []
-        a = r.append
-        g = self._getfileob
+        r=[]
+        a=r.append
+        g=self._getfileob
         if propagate:
             for id in self._ids(spec): a((id, g(id, spec)))
         else:
@@ -1110,12 +1025,12 @@ class LocalDirectory(
         return ()
     
     def _objectIds(self, spec=None):
-        g = self._safe_getOb
+        g=self._safe_getOb
         ids = self._ids()
         if spec is not None:
-            if type(spec) == type('s'):
-                spec = [spec]
-            r = []
+            if type(spec)==type('s'):
+                spec=[spec]
+            r=[]
             a = r.append
             for id in ids:
                 ob = g(id)
@@ -1127,10 +1042,10 @@ class LocalDirectory(
     def _objectValues(self, spec=None):
         r = []
         a = r.append
-        g = self._safe_getOb
+        g=self._safe_getOb
         if spec is not None:
-            if type(spec) == type('s'):
-                spec = [spec]
+            if type(spec)==type('s'):
+                spec=[spec]
             for id in self._ids(): 
                 ob = g(id)
                 if ob.meta_type in spec:
@@ -1142,10 +1057,10 @@ class LocalDirectory(
     def _objectItems(self, spec=None):
         r = []
         a = r.append
-        g = self._safe_getOb
+        g=self._safe_getOb
         if spec is not None:
-            if type(spec) == type('s'):
-                spec = [spec]
+            if type(spec)==type('s'):
+                spec=[spec]
             for id in self._ids(): 
                 ob = g(id)
                 if ob.meta_type in spec:
@@ -1159,7 +1074,7 @@ class LocalDirectory(
         r = []
         try:
             for id in self._ids():
-                o = self._safe_getOb(id)
+                o=self._safe_getOb(id)
                 try: 
                     if o.isPrincipiaFolderish: r.append(o)
                 except: pass
@@ -1179,7 +1094,7 @@ class LocalDirectory(
             if not hasattr(ob, 'aq_parent'): break
             ob = ob.aq_parent
         ids.reverse()
-        return '/'.join(ids)
+        return string.join(ids, '/')
 
     def parentURL(self):
         """Return the URL of the parent directory."""
@@ -1187,12 +1102,12 @@ class LocalDirectory(
         spec = self.REQUEST.get('spec', None)
         if (spec is not None):
             if (type(spec) is type('')):
-                url = '%s?spec=%s' % (url, quote(spec))
+                url = '%s?spec=%s' % (url, urllib.quote(spec))
             else:
                 query = []
                 for patt in spec:
-                    query.append('spec:list=%s' % quote(patt))
-                url = url + '?' + '&'.join(query)
+                    query.append('spec:list=%s' % urllib.quote(patt))
+                url = url + '?' + string.join(query, '&')
         return url
 
     def defaultDocument(self):
@@ -1200,13 +1115,12 @@ class LocalDirectory(
         as a Zope object or None."""
         #***Andreas Don#t know why but self.default_document is sometimes empty
         try:
-            files = self.default_document.split()
+            files = string.split(self.default_document)
             for file in files:
                 path = self._getpath(file)
-                if os.path.isfile(path):
-                    try:
-                        return self._safe_getOb(file)
-                    except Forbidden: pass
+                if (os.path.isfile(path)):
+                        try: return self._safe_getOb(file)
+                        except 'Forbidden': pass
         except:
             pass
         return None
@@ -1229,8 +1143,7 @@ class LocalDirectory(
            ob = ZopePageTemplate(name, body, content_type=typ)
         elif typ in ('text/html', 'text/xml', 'text/plain'):
            from OFS.DTMLDocument import DTMLDocument
-           if type(body) is not type(''):
-               body=body.read()
+           if type(body) is not type(''): body=body.read()
            ob = DTMLDocument( body, __name__=name )
         elif typ[:6]=='image/':
            from OFS.Image import Image
@@ -1242,32 +1155,34 @@ class LocalDirectory(
 
     def manage_FTPlist(self,REQUEST):
         """Directory listing for FTP"""
-        out = ()
+        out=()
         files = list(self.fileItems())
         try:
-            if not (hasattr(self,'isTopLevelPrincipiaApplicationObject')\
-               and self.isTopLevelPrincipiaApplicationObject):
+            if not (hasattr(self,'isTopLevelPrincipiaApplicationObject') and self.isTopLevelPrincipiaApplicationObject):
                 files.insert(0,('..',self.aq_parent))
         except:
             pass
+            
         for k,v in files:
             try:
                 stat = marshal.loads(v.manage_FTPstat(REQUEST))
             except:
-                stat = None
+                stat=None
             if stat is not None:
-                out = out+((k,stat),)
+                out=out+((k,stat),)
         return marshal.dumps(out)
 
     def manage_FTPstat(self,REQUEST):
         """Psuedo stat used for FTP listings"""
-        mode = 0o040000 | 0o770
-        mtime = self.bobobase_modification_time().timeTime()
-        owner = group = 'Zope'
-        return marshal.dumps((mode, 0, 0, 1, owner, group, 0, mtime, mtime, mtime))
-
-
-class LocalFile(OFS.SimpleItem.Item, Acquisition.Implicit):
+        mode=0o040000 | 0o770
+        mtime=self.bobobase_modification_time().timeTime()
+        owner=group='Zope'
+        return marshal.dumps((mode,0,0,1,owner,group,0,mtime,mtime,mtime))
+        
+class LocalFile(
+    OFS.SimpleItem.Item, 
+    Acquisition.Implicit
+    ):
 
     """Object representing a file in the local file system."""
 
@@ -1275,8 +1190,7 @@ class LocalFile(OFS.SimpleItem.Item, Acquisition.Implicit):
 
     security = AccessControl.ClassSecurityInfo()
 
-    security.declareProtected('FTP access', 'manage_FTPstat', 'manage_FTPget',
-        'manage_FTPlist', 'PUT', 'manage_FTPput')  # sbk
+    security.declareProtected('FTP access','manage_FTPstat','manage_FTPget','manage_FTPlist','PUT', 'manage_FTPput')  # sbk
     
     def __init__(self, parent, id, path, spec):
         """LocalFile __init__"""
@@ -1292,18 +1206,18 @@ class LocalFile(OFS.SimpleItem.Item, Acquisition.Implicit):
         self.display_size = self._getDisplaySize()
         self.display_mtime = self._getDisplayTime()
 
-    def getDefaultDocumentPath(self, target, default=''):
+    def getDefaultDocumentPath(self,target,default=''):
         """Return true if is Directory and has default doc"""
-        if self.type != 'directory':
+        if self.type!='directory':
             return target
-        targetpath = os.path.join(target, default)
-        default_documents = self.parent.default_document
-        if type(default_documents) == type(' '):
-            default_documents = default_documents.split(' ')
+        targetpath=os.path.join(target, default)
+        default_documents=self.parent.default_document
+        if type(default_documents)==type(' '):
+            default_documents=string.split(default_documents,' ')
         for file in default_documents:
-            path = os.path.join(self.path, file)
-            if (os.path.isfile(path)):
-                return os.path.join(target, file)
+                path = os.path.join(self.path, file)
+                if (os.path.isfile(path)):
+                    return os.path.join(target, file)
         return os.path.join(target, default)
 
     def getObject(self):
@@ -1320,20 +1234,20 @@ class LocalFile(OFS.SimpleItem.Item, Acquisition.Implicit):
 
     def _getURL(self, spec):
         """_getURL"""
-        url = quote(self.id)
+        url = urllib.quote(self.id)
         if (self.type == 'directory') and (spec is not None):
             if (type(spec) is type('')):
-                return url + '?spec=' + quote(spec)
+                return url + '?spec=' + urllib.quote(spec)
             else:
                 query = []
                 for patt in spec:
-                    query.append('spec:list=%s' % quote(patt))
-                return url + '?' + '&'.join(query)
+                    query.append('spec:list=%s' % urllib.quote(patt))
+                return url + '?' + string.join(query, '&')
         return url
 
     def _getPlainURL(self):
         """_getPlainURL"""
-        return quote(self.id)
+        return urllib.quote(self.id)
         
     def _getType(self):
         """Return the content type of a file."""
@@ -1344,9 +1258,7 @@ class LocalFile(OFS.SimpleItem.Item, Acquisition.Implicit):
         t, c = _get_content_type(ext, self.parent._type_map)
         if t: return t
         try:
-            f = open(path, 'rb')
-            data = f.read(_test_read)
-            f.close()
+            data = open(path, 'rb').read(_test_read)
             ob = OFS.Image.File(name, name, data)
             _set_content_type(ob, t, data)
             return ob.content_type
@@ -1355,37 +1267,28 @@ class LocalFile(OFS.SimpleItem.Item, Acquisition.Implicit):
             
     def _getIcon(self):
         """Return the path of the icon associated with this file type."""
-        content_type = self.type.lower()
+        content_type = string.lower(self.type)
         _icon_map = self.parent._icon_map
-        try:
-            return _icon_map[content_type]
-        except KeyError:
-            pass
-        content_type = content_type[:content_type.find('/')]
-        try:
-            return _icon_map[content_type]
-        except KeyError:
-            pass
+        try: return _icon_map[content_type]
+        except KeyError: pass
+        content_type = content_type[:string.find(content_type, '/')]
+        try: return _icon_map[content_type]
+        except KeyError: pass
         return _icon_base + 'generic.gif'
 
     def _getSize(self):
         """Return the size of the specified file or -1 if an error occurs.
         Return None if the path refers to a directory."""
         path = self.path
-        if (os.path.isdir(path)):
-            return None
-        try:
-            return os.stat(path)[stat.ST_SIZE]
-        except:
-            return -1
+        if (os.path.isdir(path)): return None
+        try: return os.stat(path)[stat.ST_SIZE]
+        except: return -1
 
     def _getDisplaySize(self):
         """Return the size of a file or directory formatted for display."""
         size = self.size
-        if size is None:
-            return '-' * 5
-        if size == -1:
-            return _unknown
+        if size is None: return '-' * 5
+        if size == -1: return _unknown
         k = 1024.0
         if (size > k):
             size = size / k
@@ -1400,17 +1303,14 @@ class LocalFile(OFS.SimpleItem.Item, Acquisition.Implicit):
     def _getTime(self):
         """Return the last modified time of a file or directory
         or None if an error occurs."""
-        try:
-            return DateTime(os.stat(self.path)[stat.ST_MTIME])
-        except:
-            pass
+        try: return DateTime(os.stat(self.path)[stat.ST_MTIME])
+        except: pass
 
     def _getDisplayTime(self):
         """Return the last modified time of a file or directory formatted 
         for display."""
         t = self.mtime
-        if t is None:
-            return _unknown
+        if t is None: return _unknown
         return '%s %s' % (t.Time(), t.Date())
 
     #
@@ -1436,15 +1336,15 @@ class LocalFile(OFS.SimpleItem.Item, Acquisition.Implicit):
     getSize = get_size
 
     def manage_FTPstat(self,REQUEST):
-        """Pseudo stat used for FTP listings"""
-        size = self._getSize()
-        mode = 0o100000 | 0o660
-        if self.type == 'directory':
-            size = 0
-            mode = 0o040000 | 0o770
-        mtime = self.bobobase_modification_time().timeTime()
-        owner = group = 'Zope'
-        return marshal.dumps((mode, 0, 0, 1, owner, group, size, mtime, mtime, mtime))
+        """Psuedo stat used for FTP listings"""
+        size=self._getSize()
+        mode=0o100000 | 0o660
+        if self.type=='directory':
+            size=0
+            mode=0o040000 | 0o770
+        mtime=self.bobobase_modification_time().timeTime()
+        owner=group='Zope'
+        return marshal.dumps((mode,0,0,1,owner,group,size,mtime,mtime,mtime))
 
 
 class FileMoniker:
@@ -1471,12 +1371,11 @@ class FileMoniker:
             ob=ob._safe_getOb(id)
         return ob
 
-
 class LocalFS(
     LocalDirectory,
     OFS.PropertyManager.PropertyManager,
     Persistence.Persistent,
-    RoleManager
+    AccessControl.Role.RoleManager
     ):
 
     """Object that creates Zope objects from files in the local file system."""
@@ -1541,7 +1440,7 @@ class LocalFS(
     isPrincipiaFolderish = 1  #SmileyChris *** leaving this at one though
     catalog = 0
     root = None
-    password = ''
+    password=''
     
     _type_map = _types
     _icon_map = _icons
@@ -1550,10 +1449,11 @@ class LocalFS(
     file_filter = None
     
     def __init__(self, id, title, basepath, username, password):
-        """LocalFS __init__"""
+        """LocalDirectory __init__"""
         LocalDirectory.__init__(self, id, basepath, self, self.tree_view, 
             self.catalog, self._type_map, self._icon_map, self.file_filter)
         self.title = title
+        
         self.basepath = self._local_path = basepath
         if (_iswin32):
             self.username = username
@@ -1573,29 +1473,29 @@ class LocalFS(
         """Edit object properties via the web.
         The purpose of this method is to change all property values,
         even those not listed in REQUEST; otherwise checkboxes that
-        get turned off will be ignored. Use manage_changeProperties()
+        get turned off will be ignored.  Use manage_changeProperties()
         instead for most situations.
         """
-        type_map = self.type_map
-        icon_map = self.icon_map
-        file_filter = self.file_filter
+        type_map=self.type_map
+        icon_map=self.icon_map
+        file_filter=self.file_filter
         if (_iswin32):
-            username = self.username
-            password = self._password
+            username=self.username
+            password=self._password
 
-        OFS.PropertyManager.PropertyManager.manage_editProperties(self, REQUEST)
-
-        if self.file_filter.strip() == '':
-            self.file_filter = None
-        if self.file_filter == 'None':
-            self.file_filter = None
+        OFS.PropertyManager.PropertyManager.manage_editProperties(self,REQUEST)
+        
+        if string.strip(self.file_filter)=='':
+            self.file_filter=None
+        if self.file_filter=='None':
+            self.file_filter=None
         if self.type_map != type_map:
             self._type_map = _list2typemap(self.type_map)
         if self.icon_map != type_map:
             self._icon_map = _list2iconmap(self.icon_map)
         if (_iswin32):
             if self.username != username or self.password != password:
-                self._password = password
+                self._password=password
                 if (self._connected):
                     self._disconnect()
                 m = unc_expr.match(self.basepath)
@@ -1604,24 +1504,26 @@ class LocalFS(
                     self._connect()
                 else:
                     self._share = ''
-            self.password = ''
-        self.isPrincipiaFolderish = 1
-        message = "Saved changes."
-        return self.manage_propertiesForm(self, REQUEST,
-           manage_tabs_message=message, update_menu=1)
-
+            self.password=''
+        self.isPrincipiaFolderish = 1   # ***SmileyCris was self.tree_view, always true now
+        message="Saved changes."  # ***
+        return self.manage_propertiesForm(self,REQUEST,manage_tabs_message=message,update_menu=1) # ***
+        
     def manage_changeProperties(self, REQUEST=None, **kw):
         """Change existing object properties.
 
         Change object properties by passing either a mapping object
         of name:value pairs {'foo':6} or passing name=value parameters
         """
-        type_map = self.type_map
-        icon_map = self.icon_map
+        type_map=self.type_map
+        icon_map=self.icon_map
         if (_iswin32):
-            username = self.username
-            password = self._password
-        OFS.PropertyManager.PropertyManager.manage_changeProperties(self, REQUEST, **kw)
+            username=self.username
+            password=self._password
+        
+        apply(OFS.PropertyManager.PropertyManager.manage_changeProperties,
+            (self,REQUEST),kw)
+            
         if self.type_map != type_map:
             self._type_map = _list2typemap(self.type_map)
         if self.icon_map != type_map:
@@ -1675,23 +1577,20 @@ class LocalFS(
 
     def hasDefaultDocument(self):
         """Return true if is Directory and has default doc"""
-        # self.default_document is sometimes empty
+        #***Andreas Don#t know why but self.default_document is sometimes empty
         try:
-            files = self.default_document.split()
+            files = string.split(self.default_document)
             for file in files:
                 path = self._getpath(file)
                 if (os.path.isfile(path)):
-                    try:
-                        return self._safe_getOb(file)
-                    except Forbidden:
-                        pass
+                        try: return self._safe_getOb(file)
+                        except 'Forbidden': pass
         except:
             pass
         return None
 
-
-def manage_addLocalFS(self, id, title, basepath, 
-    username=None, password=None, REQUEST=None):
+        
+def manage_addLocalFS(self, id, title, basepath, username=None, password=None, REQUEST=None):
     """Add a local file system object to a folder
   
     In addition to the standard Zope object-creation arguments,
@@ -1704,8 +1603,7 @@ def manage_addLocalFS(self, id, title, basepath,
     
     ob = LocalFS(id, title, basepath, username, password)
     self._setObject(id, ob)
-    if REQUEST is not None:
+    if REQUEST is not None:  # ***SmileyChris [ 742484 ] Cannot add LocalFS programmatically
         return self.manage_main(self, REQUEST)
 
 manage_addLocalFSForm=HTMLFile('dtml/methodAdd', globals())
-
