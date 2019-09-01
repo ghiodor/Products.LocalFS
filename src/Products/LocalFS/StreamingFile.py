@@ -2,7 +2,7 @@
 __doc__="""Local File System product"""
 
 from OFS.Image import File, Image, Pdata
-from cStringIO import StringIO
+from io import StringIO
 from ZPublisher.HTTPRequest import FileUpload
 
 BUFFER_SIZE = 1 << 16
@@ -12,20 +12,20 @@ def _read_data(self, file):
     # get the file size and return a faked Pdata object.
     if isinstance(file, str):
         size = len(file)
-        if size < BUFFER_SIZE: return file, size
+        if size < BUFFER_SIZE: 
+            return file, size
         # Big string: cut it into smaller chunks
         file = StringIO(file)
 
     if isinstance(file, FileUpload) and not file:
-        raise ValueError, 'File not specified'
+        raise ValueError('File not specified')
 
     if hasattr(file, '__class__') and file.__class__ in (Pdata, Sdata):
         size = len(file)
         return file, size
-    
+
     pos = file.tell()
-    file.seek(0, 2)
-    size = file.tell()
+    size = file.seek(0, 2)
     file.seek(pos, 0)
     return Sdata(file, size), size
 

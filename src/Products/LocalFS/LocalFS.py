@@ -333,16 +333,22 @@ def _create_ob_from_function(c, id, path):
         c = getattr(m, c)
         f = getattr(c, 'createSelf').__func__ # TODO: does it have __func__?
         if f.__code__.co_varnames == ('id', 'file'):
-            return _wrap_ob(f(id, file), path)
+            file = open(path, 'rb') # TODO mode=b?
+            obj = f(id, file)
+            file.close()
+            return _wrap_ob(obj, path)
     except: pass
     
-def _create_ob_from_factory(c, id, file, path):
+def _create_ob_from_factory(c, id, path):
     try:
         i = c.rindex('.')
         m, c = c[:i], c[i+1:]
         c = getObject(m, c)
         f = c()
-        ob = _wrap_ob(f(id, file), path)
+        file = open(path, 'rb') # TODO mode=b?
+        obj = f(id, file)
+        file.close()
+        ob = _wrap_ob(obj, path)
         ob.__factory = f
         return ob
     except: pass
@@ -590,6 +596,7 @@ class LocalDirectory(
 
     def __bobo_traverse__(self, REQUEST, name):
         """ bobo_traverse """
+        # import pdb; pdb.set_trace()
         method = REQUEST.get('REQUEST_METHOD', 'GET').upper()
         try:
             # FTP - PUT
