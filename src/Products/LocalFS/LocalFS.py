@@ -77,28 +77,26 @@ eNotFound=MessageDialog(
 from ZODB.TimeStamp import TimeStamp
 from DateTime import DateTime
 import marshal  # sbk
-from ZPublisher import xmlrpc # sbk
+from ZPublisher import xmlrpc
 try: 
     from OFS.role import RoleManager 
 except ImportError: 
     # Zope <=2.12 
     from AccessControl.Role import RoleManager
 from zExceptions import BadRequest, Forbidden, Unauthorized, NotFound, MethodNotAllowed
-class UploadError(Exception): pass
-class RenameError(Exception): pass
-class DeleteError(Exception): pass
-try:
-    from StreamingFile import StreamingFile, StreamingImage
-    ITERATORS_PRESENT=1
-except:
-    ITERATORS_PRESENT=0
 from Products.PageTemplates.ZopePageTemplate import ZopePageTemplate
 from Products.PythonScripts.PythonScript import PythonScript
 
+class UploadError(Exception): pass
+class RenameError(Exception): pass
+class DeleteError(Exception): pass
+
 _iswin32 = (sys.platform == 'win32')
 if (_iswin32):
-    try: import win32wnet
-    except ImportError: pass
+    try:
+        import win32wnet
+    except ImportError:
+        pass
     unc_expr = re.compile(r'(\\\\[^\\]+\\[^\\]+)(.*)')
 
 _test_read = 1024 * 8
@@ -109,7 +107,7 @@ _unknown = '(unknown)'
 # This same process is used in LocalDirectory._getOb and LocalFile._getType.
 #
 # 1. Call _get_content_type which tries to look up the content-type 
-#    in the type map.
+#    in the type map based on the file extension.
 # 2. If that fails then create a file object with the first _test_read
 #    bytes of data and see what content-type Zope determines.
 #    If we can't read the file then assign 'application/octet-stream'.
@@ -131,7 +129,7 @@ def _set_content_type(ob, content_type, data):
     """_set_content_type"""
     if content_type:
         ob.content_type = content_type
-    if hasattr(ob, 'content_type') and ob.content_type == 'text/html':
+    if getattr(ob, 'content_type', None) == 'text/html':
         if content_type == 'text/html':
             return
         data = data.strip().lower()
@@ -256,70 +254,78 @@ def _iconmap2list(m):
         l.append("".join((k, m[k])))
     return l
 
-def _create_ob(id, file, path, _type_map):
+def _create_ob(id, path, _type_map):
     """_create_ob"""
     ob = None
     ext = os.path.splitext(path)[-1]
-    t, c = _get_content_type(ext, _type_map)
+    t, c = _get_content_type(ext.lower(), _type_map)
     if c is not None:
-        ob = _create_builtin_ob(c, id, file, path)
+        ob = _create_builtin_ob(c, id, path)
         if ob is None:
-            ob = _create_ob_from_function(c, id, file, path)
+            ob = _create_ob_from_function(c, id, path)
         if ob is None:
-            ob = _create_ob_from_factory(c, id, file, path)
+            ob = _create_ob_from_factory(c, id, path)
     if ob is None:
-        ob = _wrap_ob(_create_File(id, file), path)
-    file.seek(0)
+        ob = _wrap_ob(_create_File(id, path), path)
+    # TODO: avoid this check here
+    file = open(path, 'rb')
     ob.__doc__ = 'LocalFile'
     _set_content_type(ob, t, file.read(_test_read))
     return ob
 
-def _create_DTMLMethod(id, file):
+def _create_DTMLMethod(id, path):
     """_create_DTMLMethod"""
-    return OFS.DTMLMethod.DTMLMethod(file.read(), __name__=id)
+    with open(path, 'r') as file:
+        return OFS.DTMLMethod.DTMLMethod(file.read(), __name__=id)
 
-def _create_DTMLDocument(id, file):
+def _create_DTMLDocument(id, path):
     """_create_DTMLDocument"""
-    return OFS.DTMLDocument.DTMLDocument(file.read(), __name__=id)
+    with open(path, 'r') as file:
+        return OFS.DTMLDocument.DTMLDocument(file.read(), __name__=id)
 
-def _create_Image(id, file):
+def _create_Image(id, path):
     """_create_Image"""
-    if ITERATORS_PRESENT==1:
-        return StreamingImage(id, '', file)
-    return OFS.Image.Image(id, '', file)
+    with open(path, 'rb') as file:
+        ob = OFS.Image.Image(id, '', file)
+    return ob
 
-def _create_File(id, file):
+def _create_File(id, path):
     """_create_File"""
-    if ITERATORS_PRESENT==1:
-        return StreamingFile(id, '', file)
-    return OFS.Image.File(id, '', file)
+    with open(path, 'rb') as file: # TODO always mode=b ok?
+        ob = OFS.Image.File(id, '', file)
+    return ob
 
-def _create_ZPT(id, file):
+def _create_ZPT(id, path):
     """_create_ZPT"""
-    return ZopePageTemplate(id, file, content_type='text/html')
+    with open(path, 'r') as file:
+        ob = ZopePageTemplate(id, '', content_type='text/html')
+        ob.pt_upload(None, file, encoding='utf-8')
+    return ob
 
-def _create_PythonScript(id, file):
+def _create_PythonScript(id, path):
     """_create_PythonScript"""
-    ob = PythonScript(id)
-    ob.write(file.read())
+    with open(path, 'r') as file:
+        ob = PythonScript(id)
+        ob.write(file.read())
     return ob
 
 _builtin_create = {
-    'PythonScript': _create_PythonScript,
     'DTMLMethod': _create_DTMLMethod,
     'DTMLDocument': _create_DTMLDocument,
     'Image': _create_Image,
     'File': _create_File,
     'PageTemplate': _create_ZPT,
+    'PythonScript': _create_PythonScript,
 }
 
-def _create_builtin_ob(c, id, file, path):
-    try: 
+def _create_builtin_ob(c, id, path):
+    try:
         f = _builtin_create[c]
-        return _wrap_ob(f(id, file), path)
+        obj = f(id, path)
+        return _wrap_ob(obj, path)
     except: pass
     
-def _create_ob_from_function(c, id, file, path):
+def _create_ob_from_function(c, id, path):
     try:
         i = c.rindex('.')
         m, c = c[:i], c[i+1:]
@@ -350,7 +356,7 @@ class Wrapper:
     # The object itself is not persistent and cannot be stored
     _p_changed = 0
 
-    # TODO: Zope does not use bobobase*    
+    # TODO: Zope 4 does not use bobobase* anymore
     def bobobase_modification_time(self):
         """ bobobase_modification_time """
         t = os.stat(self._local_path)[stat.ST_MTIME]
@@ -825,7 +831,7 @@ class LocalDirectory(
                         title='Success!',
                         message='The directory has been created.',
                         action=action)
-            
+
     def manage_upload(self, file, id='', action='manage_workspace', REQUEST=None):
         """Upload a file to the local file system. The 'file' parameter
         is a FileUpload instance representing the uploaded file."""
@@ -1568,10 +1574,6 @@ class LocalFS(
                 self._connect()
             else:
                 self._share = ''
-
-    def IteratorsPresent(self,REQUEST=None):
-        """Return if more performant StreamingFile used"""
-        return ITERATORS_PRESENT
 
     def manage_editProperties(self, REQUEST):
         """Edit object properties via the web.
