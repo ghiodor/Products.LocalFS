@@ -437,7 +437,7 @@ def _wrap_ob(ob, path):
     n = ob.__name__
     if hasattr(c, '__basicnew__'):
         c = _get_wrapper(c)
-        d= ob.__dict__
+        d = ob.__dict__
         ob = c.__basicnew__()
         ob.__dict__.update(d)
     else:
@@ -511,7 +511,7 @@ def _set_timestamp(ob, path):
     t = TimeStamp(*time.gmtime(t)[:6])
     ob._p_serial = t.raw()
     
-_marker=[]
+_marker = []
 
 def valid_id(id):
     if id == os.curdir or id == os.pardir or id[0] == '_':
@@ -554,16 +554,20 @@ class LocalDirectory(
     manage_uploadForm = HTMLFile('dtml/methodUpload', globals())
     
     manage_options = (
-        {'label':'Contents', 'action':'manage_main'},
-        {'label':'View', 'action':'index_html'},
-        {'label':'Upload', 'action':'manage_uploadForm'},
+        {'label': 'Contents', 'action': 'manage_main'},
+        {'label': 'View', 'action': 'index_html'},
+        {'label': 'Upload', 'action': 'manage_uploadForm'},
         )
 
     icon = 'misc_/OFSP/Folder_icon.gif'
     
-    security = AccessControl.ClassSecurityInfo()  # sbk
+    security = AccessControl.ClassSecurityInfo()
 
-    security.declareProtected('FTP access','manage_FTPstat','manage_FTPget','manage_FTPlist')  # sbk
+    security.declareProtected(
+        'FTP access',
+        'manage_FTPstat',
+        'manage_FTPget',
+        'manage_FTPlist')
 
     
     def __init__(self, id, basepath, root, tree_view, catalog, _type_map,
@@ -595,8 +599,8 @@ class LocalDirectory(
             return getattr(self, name)
         except AttributeError: 
             pass
-        # ***Andreas did not apply this change from SmilyChris because I do not nead 
-        # ***to handle errors if self._save_getOb(name) fails
+        # ***Andreas did not apply this change from SmilyChris because I do 
+        # *** not need to handle errors if self._save_getOb(name) fails
         # It fails on Zope2.7b3+ so LocalFS is broken 
         
         # ***SmileyChris (PTs don't have a RESPONSE?)
@@ -664,27 +668,26 @@ class LocalDirectory(
         return self._getOb(name, default)
 
     def _getOb(self, id, default=_marker):
-        if (id in (os.curdir, os.pardir)):
+        if id in (os.curdir, os.pardir):
             raise ValueError(id)
         ob = None
         path = self._getpath(id)
-        if (os.path.isdir(path)):
+        if os.path.isdir(path):
             ob = LocalDirectory(id, path, self.root or self, self.tree_view,
                 self.catalog, self._type_map, self._icon_map)
-        elif (os.path.isfile(path)):
-            f = open(path, 'rb')
-            ob = _create_ob(id, f, path, self._type_map)
-        if (ob is None):
+        elif os.path.isfile(path):
+            ob = _create_ob(id, path, self._type_map)
+        if ob is None:
             if default is _marker:
                 raise AttributeError(id)
             return default
         _set_timestamp(ob, path)
         ob._p_jar = self._p_jar
-        return ob.__of__(self)
+        return ob.__of__(self) # TODO what's this?
                     
     def _setObject(self, id, object, roles=None, user=None):
         if getattr(object, '__locknull_resource__', 0):
-            self._checkId(id,1)
+            self._checkId(id, 1)
             return id
         else:
             self._checkId(id)
@@ -1352,7 +1355,7 @@ class LocalFile(OFS.SimpleItem.Item, Acquisition.Implicit):
             return ob.content_type
         except EnvironmentError:
             return 'application/octet-stream'
-            
+
     def _getIcon(self):
         """Return the path of the icon associated with this file type."""
         content_type = self.type.lower()
@@ -1453,22 +1456,23 @@ class FileMoniker:
     
     def __init__(self, ob=None):
         """FileMoniker __init__"""
-        if ob is None: return
-        self.ids=[]
+        if ob is None:
+            return
+        self.ids = []
         while 1:
             if not hasattr(ob, 'id'):
                 break
             if ob.meta_type == 'Local File System':
                 break
             self.ids.append(absattr(ob.id))
-            ob=ob.aq_parent
+            ob = ob.aq_parent
         self.ids.reverse()
 
     def bind(self, root):
         """Return the file object named by this moniker"""
-        ob=root
+        ob = root
         for id in self.ids:
-            ob=ob._safe_getOb(id)
+            ob = ob._safe_getOb(id)
         return ob
 
 
@@ -1481,20 +1485,20 @@ class LocalFS(
 
     """Object that creates Zope objects from files in the local file system."""
 
-    meta_type='Local File System'
+    meta_type = 'Local File System'
     
-    manage_options=(
+    manage_options = (
         (
-        {'label':'Contents', 'action':'manage_main',
-         'help':('LocalFS','FileSystem_Contents.stx')},
-        {'label':'View', 'action':'',
-         'help':('LocalFS','FileSystem_View.stx')},
-        {'label':'Properties', 'action':'manage_propertiesForm',
-         'help':('LocalFS','FileSystem_Properties.stx')},
-        {'label':'Security', 'action':'manage_access',
-         'help':('LocalFS','FileSystem_Security.stx')},
-        {'label':'Upload', 'action':'manage_uploadForm',
-         'help':('LocalFS','FileSystem_Upload.stx')},
+        {'label': 'Contents', 'action': 'manage_main',
+         'help': ('LocalFS', 'FileSystem_Contents.stx')},
+        {'label': 'View', 'action': '',
+         'help': ('LocalFS', 'FileSystem_View.stx')},
+        {'label': 'Properties', 'action': 'manage_propertiesForm',
+         'help': ('LocalFS', 'FileSystem_Properties.stx')},
+        {'label': 'Security', 'action': 'manage_access',
+         'help': ('LocalFS', 'FileSystem_Security.stx')},
+        {'label': 'Upload', 'action': 'manage_uploadForm',
+         'help': ('LocalFS', 'FileSystem_Upload.stx')},
         )
     )
 
@@ -1504,10 +1508,10 @@ class LocalFS(
         ('View management screens', 
             ('manage', 'manage_main')),
         ('Change Local File System properties', 
-            ('manage_propertiesForm','manage_changeProperties')),
+            ('manage_propertiesForm', 'manage_changeProperties')),
         ('Access contents information', 
             ('fileIds', 'fileValues', 'fileItems')),
-        ('Upload local files', 
+        ('Upload local files',
             ('manage_uploadForm', 'manage_upload')), # ***SmileyChris no WAY should anonymous be allowed to upload by default!
         ('Overwrite local files', ('manage_overwrite',)),
         ('Manage local files', 
@@ -1518,20 +1522,20 @@ class LocalFS(
         )
     
     _properties=(
-        {'id':'title', 'type': 'string', 'mode':'w'},
-        {'id':'basepath', 'type': 'string', 'mode':'w'},
+        {'id': 'title', 'type': 'string', 'mode': 'w'},
+        {'id': 'basepath', 'type': 'string', 'mode': 'w'},
     )
     if (_iswin32): _properties = _properties + (
-        {'id':'username', 'type': 'string', 'mode':'w'},
-        {'id':'password', 'type': 'string', 'mode':'w'},
+        {'id': 'username', 'type': 'string', 'mode': 'w'},
+        {'id': 'password', 'type': 'string', 'mode': 'w'},
     )
     _properties = _properties + (
-        {'id':'default_document', 'type': 'string', 'mode':'w'},
-        {'id':'type_map', 'type': 'lines', 'mode':'w'},
-        {'id':'icon_map', 'type': 'lines', 'mode':'w'},
-        {'id':'catalog', 'type': 'boolean', 'mode':'w'},
-        {'id':'tree_view', 'type': 'boolean', 'mode':'w'},
-        {'id':'file_filter', 'type': 'string', 'mode':'w'},	
+        {'id': 'default_document', 'type': 'string', 'mode': 'w'},
+        {'id': 'type_map', 'type': 'lines', 'mode': 'w'},
+        {'id': 'icon_map', 'type': 'lines', 'mode': 'w'},
+        {'id': 'catalog', 'type': 'boolean', 'mode': 'w'},
+        {'id': 'tree_view', 'type': 'boolean', 'mode': 'w'},
+        {'id': 'file_filter', 'type': 'string', 'mode': 'w'},	
     )
 
     default_document = 'index.html default.html'
@@ -1707,5 +1711,5 @@ def manage_addLocalFS(self, id, title, basepath,
     if REQUEST is not None:
         return self.manage_main(self, REQUEST)
 
-manage_addLocalFSForm=HTMLFile('dtml/methodAdd', globals())
+manage_addLocalFSForm = HTMLFile('dtml/methodAdd', globals())
 

@@ -44,7 +44,7 @@ class Sdata(Pdata):
     """ Streaming wrapper for possibly large data """
     # Imitates OFS.Image.Pdata
     # Make it a subclass of Pdata to be conform with ExternalEditor
-    
+
     _p_changed = 0
 
     def __init__(self, file, fsize, _offset=0):
@@ -61,13 +61,16 @@ class Sdata(Pdata):
         offset = self.offset + BUFFER_SIZE
         if offset < self.fsize:
             return Sdata(self.file, self.fsize, offset)
-    
+
     def __getslice__(self, i, j):
         size = min(BUFFER_SIZE, len(self))
-        if i < 0: i = max(i + size, 0)
+        if i < 0:
+            i = max(i + size, 0)
         j = min(j, size)
-        if j < 0: j = max(j + size, 0)
-        if i >= j: return ''
+        if j < 0:
+            j = max(j + size, 0)
+        if i >= j:
+            return ''
         self.file.seek(self.offset+i, 0)
         return self.file.read(j-i)
 
@@ -77,3 +80,4 @@ class Sdata(Pdata):
     def __str__(self):
         self.file.seek(self.offset, 0)
         return self.file.read()
+
