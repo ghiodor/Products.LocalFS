@@ -1,3 +1,7 @@
+Changes v2.0
+	- improve compatibility with py3 and zope4
+        - readability changes (loosely PEP8)
+
 Changes v1.12 - Thimo Kraemer <thimo.kraemer@joonis.de>
 	- Removed management tab "Properties"
 
